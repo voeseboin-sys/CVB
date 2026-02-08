@@ -10,18 +10,6 @@ from datetime import datetime
 from pathlib import Path
 from kivy.utils import platform
 
-def solicitar_permisos_android():
-    """Solicita permisos de almacenamiento en tiempo de ejecución para Android 13+"""
-    if platform == 'android':
-        from android.permissions import request_permissions, Permission
-        # Solicitamos los permisos necesarios para manejar archivos y PDFs
-        request_permissions([
-            Permission.READ_EXTERNAL_STORAGE,
-            Permission.WRITE_EXTERNAL_STORAGE,
-            Permission.MANAGE_EXTERNAL_STORAGE,
-            Permission.INTERNET
-        ])
-
 # Configuración de Kivy antes de importar cualquier otra cosa
 os.environ['KIVY_ORIENTATION'] = 'landscape'
 os.environ['KIVY_GL_BACKEND'] = 'sdl2'
