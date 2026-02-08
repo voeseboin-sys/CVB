@@ -37,7 +37,7 @@ version = 2.0.1
 # (list) Application requirements
 # KivyMD 2.0.1 desde GitHub (master) para Material Design 3
 # materialyoucolor es obligatorio para KivyMD 2.0
-requirements = python3==3.10.11, hostpython3==3.10.11, kivy==2.3.0, https://github.com/kivymd/KivyMD/archive/master.zip, pillow, fpdf2, plyer, requests, materialyoucolor, sqlite3
+requirements = python3==3.10.11, kivy==2.3.0, kivymd==1.2.0, pillow, fpdf2, plyer, requests, materialyoucolor
 
 # (str) Custom source folders for requirements
 # Sets custom source for any requirements with recipes
