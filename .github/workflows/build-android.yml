@@ -1,78 +1,329 @@
-# .github/workflows/debug-build.yml
-name: Debug Build
+# .github/workflows/build-apk.yml
+name: Build APK
 
 on:
+  push:
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
-  debug:
+  build:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     
     steps:
-    - name: Checkout
+    # 1. DESCARGAR CÓDIGO
+    - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Setup Python
+    # 2. CONFIGURAR ENTORNO
+    - name: Setup environment
+      run: |
+        # Variables críticas para Buildozer
+        echo "BUILDOZER_WARN_ON_ROOT=0" >> $GITHUB_ENV
+        echo "P4A_RELEASE_KEYSTORE_PASS=android" >> $GITHUB_ENV
+        echo "P4A_RELEASE_KEYALIAS_PASS=android" >> $GITHUB_ENV
+        echo "ANDROIDSDK=/home/runner/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
+        echo "ANDROIDNDK=/home/runner/.buildozer/android/platform/android-ndk-r25b" >> $GITHUB_ENV
+        echo "ANDROIDAPI=33" >> $GITHUB_ENV
+
+    # 3. INSTALAR DEPENDENCIAS DEL SISTEMA
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y \
+          git \
+          zip \
+          unzip \
+          openjdk-17-jdk \
+          python3-pip \
+          python3-dev \
+          python3-venv \
+          autoconf \
+          libtool \
+          pkg-config \
+          zlib1g-dev \
+          libncurses5-dev \
+          libffi-dev \
+          libssl-dev \
+          libsqlite3-dev \
+          libjpeg-dev \
+          libfreetype6-dev \
+          libsdl2-dev \
+          libsdl2-image-dev \
+          libsdl2-mixer-dev \
+          libsdl2-ttf-dev \
+          libportmidi-dev \
+          libswscale-dev \
+          libavformat-dev \
+          libavcodec-dev \
+          libgstreamer1.0-dev \
+          gstreamer1.0-plugins-base \
+          gstreamer1.0-plugins-good \
+          libmtdev-dev \
+          libudev-dev \
+          libxi-dev \
+          libxinerama-dev \
+          libxrandr-dev \
+          libxcursor-dev \
+          libxfixes-dev \
+          libxkbcommon-dev \
+          libdrm-dev \
+          libgbm-dev \
+          libinput-dev \
+          libts-dev \
+          libpng-dev \
+          libvpx-dev \
+          libwebp-dev \
+          libogg-dev \
+          libvorbis-dev \
+          libflac-dev \
+          libmpg123-dev \
+          libmodplug-dev \
+          libsmpeg-dev \
+          curl \
+          wget \
+          ninja-build \
+          cmake \
+          build-essential
+
+    # 4. CONFIGURAR PYTHON Y JAVA
+    - name: Setup Python and Java
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
+    - uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
 
-    - name: Install minimal deps
+    # 5. INSTALAR BUILDOZER Y DEPENDENCIAS
+    - name: Install Python dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y python3-pip git
-        pip install buildozer
+        python -m pip install --upgrade pip wheel setuptools virtualenv
+        pip install --user cython==0.29.33
+        pip install --user buildozer==1.5.0
+        pip install --user kivy==2.3.0
+        pip install --user pillow
+        pip install --user fpdf2
+        pip install --user plyer
+        pip install --user requests
+        pip install --user materialyoucolor
+        # KivyMD desde master
+        pip install --user "https://github.com/kivymd/KivyMD/archive/master.zip"
+        # Añadir al PATH
+        echo "/home/runner/.local/bin" >> $GITHUB_PATH
 
-    - name: Test Buildozer
+    # 6. CREAR buildozer.spec SI NO EXISTE
+    - name: Ensure buildozer.spec exists
       run: |
-        echo "=== Buildozer version ==="
-        buildozer --version || echo "Buildozer not found"
-        
-        echo ""
-        echo "=== Python version ==="
-        python --version
-        
-        echo ""
-        echo "=== Directory structure ==="
-        ls -la
-        
-        echo ""
-        echo "=== buildozer.spec exists? ==="
-        if [ -f "buildozer.spec" ]; then
-          echo "Yes"
-          echo "First 20 lines:"
-          head -20 buildozer.spec
-        else
-          echo "No - creating basic one"
-          cat > buildozer.spec << EOF
+        if [ ! -f "buildozer.spec" ]; then
+          echo "Creando buildozer.spec..."
+          cat > buildozer.spec << 'EOF'
 [app]
-title = Test App
-package.name = testapp
-package.domain = org.test
+title = Factory Manager Pro
+package.name = factorymanager
+package.domain = com.factory
 source.dir = .
-source.include_exts = py,png,jpg,kv
-version = 1.0
-requirements = python3,kivy
-orientation = portrait
+source.include_exts = py,png,jpg,kv,atlas,ttf,json,xml,db,sql
+version = 1.0.0
+requirements = python3==3.10.11,kivy==2.3.0,pillow,fpdf2,plyer,requests,materialyoucolor,sqlite3
+orientation = landscape
+fullscreen = 0
+
+[android]
+arch = arm64-v8a
+api = 33
+minapi = 26
+ndk = 25b
+sdk = 24
+permissions = INTERNET,WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE
+gradle_dependencies = androidx.core:core:1.10.1, androidx.appcompat:appcompat:1.6.1
+enable_androidx = True
+allow_backup = True
+accept_sdk_license = True
+wakelock = True
+private_storage = True
+release_artifact = aab
+debug_artifact = apk
 
 [buildozer]
 log_level = 2
 warn_on_root = 0
 EOF
+        else
+          echo "buildozer.spec ya existe, verificando..."
+          # Asegurar configuraciones críticas
+          sed -i 's/^android.api = .*/android.api = 33/' buildozer.spec
+          sed -i 's/^android.ndk = .*/android.ndk = 25b/' buildozer.spec
+          sed -i 's/^android.accept_sdk_license = .*/android.accept_sdk_license = True/' buildozer.spec
+          sed -i 's/^buildozer.warn_on_root = .*/buildozer.warn_on_root = 0/' buildozer.spec
         fi
 
-    - name: Try Buildozer Init
+    # 7. VERIFICAR PROYECTO
+    - name: Verify project
       run: |
-        echo "=== Running buildozer init ==="
-        buildozer init 2>&1 | head -50
-        
+        echo "=== VERIFICACIÓN DEL PROYECTO ==="
         echo ""
-        echo "=== Checking .buildozer directory ==="
-        ls -la .buildozer 2>/dev/null || echo ".buildozer not created"
+        echo "1. Archivos principales:"
+        ls -la main.py buildozer.spec requirements.txt 2>/dev/null || echo "Algunos archivos no existen"
+        echo ""
+        echo "2. Estructura de modules/:"
+        ls -la modules/ 2>/dev/null || echo "No hay directorio modules"
+        echo ""
+        echo "3. Test de importación básica:"
+        python -c "
+import sys
+sys.path.append('.')
+try:
+    from kivy.app import App
+    from kivy.uix.label import Label
+    print('✓ Kivy importa correctamente')
+except Exception as e:
+    print(f'✗ Error con Kivy: {e}')
+"
+        echo ""
+        echo "4. Contenido de requirements:"
+        if [ -f "requirements.txt" ]; then
+          cat requirements.txt
+        fi
 
-    - name: Simple Build Test
-      continue-on-error: true
+    # 8. INICIALIZAR BUILDOZER
+    - name: Initialize Buildozer
       run: |
-        echo "=== Trying simple build ==="
-        # Just update to download dependencies
-        timeout 600 buildozer android update 2>&1 | tail -50
+        echo "=== INICIALIZANDO BUILDOZER ==="
+        # Limpiar si hay builds anteriores
+        rm -rf .buildozer bin 2>/dev/null || true
+        
+        # Inicializar
+        buildozer init 2>&1 | tail -20
+        
+        # Verificar que se creó la configuración
+        if [ -d ".buildozer" ]; then
+          echo "✓ Buildozer inicializado correctamente"
+        else
+          echo "✗ Error: No se creó .buildozer"
+          exit 1
+        fi
+
+    # 9. DESCARGAR SDK/NDK (PASO CRÍTICO)
+    - name: Download Android SDK/NDK
+      run: |
+        echo "=== DESCARGANDO ANDROID SDK/NDK ==="
+        echo "Esto puede tomar 10-20 minutos..."
+        
+        # Forzar descarga de dependencias
+        timeout 1800 buildozer android update 2>&1 | tee download.log
+        
+        # Verificar descargas
+        echo ""
+        echo "=== VERIFICANDO DESCARGAS ==="
+        if [ -d "/home/runner/.buildozer/android/platform/android-sdk" ]; then
+          echo "✓ Android SDK descargado"
+        else
+          echo "✗ Android SDK NO descargado"
+        fi
+        
+        if [ -d "/home/runner/.buildozer/android/platform/android-ndk-r25b" ]; then
+          echo "✓ Android NDK r25b descargado"
+        else
+          echo "✗ Android NDK NO descargado"
+        fi
+
+    # 10. CONSTRUIR APK (NÚCLEO)
+    - name: Build APK
+      run: |
+        echo "=== CONSTRUYENDO APK ==="
+        echo "Esto puede tomar 15-30 minutos..."
+        
+        # Variables críticas
+        export BUILDOZER_WARN_ON_ROOT=0
+        export PATH="$PATH:/home/runner/.local/bin"
+        
+        # Construir APK debug
+        timeout 3600 buildozer -v android debug 2>&1 | tee build.log
+        
+        # Verificar resultado
+        if [ ${PIPESTATUS[0]} -eq 0 ]; then
+          echo ""
+          echo "🎉 ¡BUILD EXITOSO!"
+        else
+          echo ""
+          echo "⚠ Buildozer terminó con error, pero verificamos si se generó APK..."
+        fi
+
+    # 11. VERIFICAR Y PREPARAR APK
+    - name: Prepare APK for upload
+      run: |
+        echo "=== BUSCANDO APK GENERADO ==="
+        
+        # Buscar APK en cualquier lugar
+        find . -name "*.apk" -type f 2>/dev/null | while read apk; do
+          echo "Encontrado: $apk"
+          # Crear directorio bin si no existe
+          mkdir -p bin
+          # Mover al directorio bin
+          mv "$apk" bin/
+        done
+        
+        # Verificar si hay APKs en bin
+        echo ""
+        echo "=== CONTENIDO DE bin/ ==="
+        if [ -d "bin" ]; then
+          ls -la bin/
+          APK_COUNT=$(ls -1 bin/*.apk 2>/dev/null | wc -l)
+          if [ $APK_COUNT -gt 0 ]; then
+            echo ""
+            echo "✅ ¡APK GENERADO CORRECTAMENTE!"
+            echo "Cantidad de APKs: $APK_COUNT"
+            for apk in bin/*.apk; do
+              echo "  - $(basename $apk): $(du -h "$apk" | cut -f1)"
+            done
+          else
+            echo ""
+            echo "❌ No se encontraron APKs en bin/"
+            echo "=== Buscando en todo el proyecto ==="
+            find . -name "*.apk" 2>/dev/null
+            exit 1
+          fi
+        else
+          echo "❌ Directorio bin/ no existe"
+          exit 1
+        fi
+
+    # 12. SUBIR APK COMO ARTEFACTO
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: FactoryManager-APK
+        path: bin/*.apk
+        if-no-files-found: error
+        retention-days: 30
+
+    # 13. SUBIR LOGS PARA DEBUG
+    - name: Upload build logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: Build-Logs
+        path: |
+          build.log
+          download.log
+        retention-days: 7
+
+  # JOB ADICIONAL: GENERAR AAB PARA RELEASE
+  release:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 120
+    
+    steps:
+    - uses: actions/checkout@v4
+    - name: Download APK artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: FactoryManager-APK
+        path: bin/
+    - name: List artifacts
+      run: ls -la bin/
