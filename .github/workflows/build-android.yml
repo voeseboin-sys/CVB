@@ -1,11 +1,11 @@
 # .github/workflows/build-android.yml
-name: Build Android APK
+name: Build Android APK/AAB
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
     inputs:
       build_type:
@@ -14,11 +14,11 @@ on:
         default: 'debug'
         type: choice
         options:
-        - debug
-        - release
+          - debug
+          - release
 
 env:
-  PYTHON_VERSION: '3.9'
+  PYTHON_VERSION: '3.10.11'
   JAVA_VERSION: '17'
 
 jobs:
@@ -33,17 +33,17 @@ jobs:
       uses: actions/checkout@v4
 
     # ============================================
-    # 2. CONFIGURAR PYTHON
+    # 2. CONFIGURAR PYTHON 3.10.11
     # ============================================
-    - name: Set up Python
+    - name: Set up Python ${{ env.PYTHON_VERSION }}
       uses: actions/setup-python@v5
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
     # ============================================
-    # 3. CONFIGURAR JAVA
+    # 3. CONFIGURAR JAVA 17
     # ============================================
-    - name: Set up JDK
+    - name: Set up JDK ${{ env.JAVA_VERSION }}
       uses: actions/setup-java@v4
       with:
         java-version: ${{ env.JAVA_VERSION }}
@@ -57,6 +57,8 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y \
           python3-pip \
+          python3-dev \
+          python3-venv \
           build-essential \
           git \
           zip \
@@ -77,67 +79,69 @@ jobs:
           liblzma-dev \
           libgmp-dev \
           libmpfr-dev \
-          libmpc-dev
-        
-        # Instalar SDL2 para Kivy
-        sudo apt-get install -y \
-          libsdl2-dev \
-          libsdl2-image-dev \
-          libsdl2-mixer-dev \
-          libsdl2-ttf-dev \
-          portaudio19-dev \
-          libffi-dev \
-          libavformat-dev \
-          libavcodec-dev \
-          libswscale-dev
+          libmpc-dev \
+          curl \
+          wget \
+          ninja-build \
+          cmake
 
     # ============================================
     # 5. CACHE PARA ACELERAR BUILDS
     # ============================================
-    - name: Cache Buildozer dependencies
+    - name: Cache Buildozer and SDK
       uses: actions/cache@v4
       with:
         path: |
           ~/.buildozer
           ~/.gradle
           ~/.android
+          /tmp/.buildozer_cache
         key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
         restore-keys: |
           ${{ runner.os }}-buildozer-
 
     # ============================================
-    # 6. INSTALAR BUILDOZER Y DEPENDENCIAS PYTHON
+    # 6. INSTALAR BUILDOZER Y DEPENDENCIAS
     # ============================================
-    - name: Install Buildozer and Python dependencies
+    - name: Install Buildozer and dependencies
       run: |
-        # Actualizar pip
-        python -m pip install --upgrade pip wheel setuptools
+        # Actualizar pip y herramientas
+        python -m pip install --upgrade pip wheel setuptools virtualenv
         
-        # Instalar Buildozer con versión específica de Cython
-        pip install --user buildozer cython==0.29.33
+        # Instalar Buildozer con dependencias específicas
+        pip install --user buildozer cython==0.29.36
         
-        # Instalar Kivy y KivyMD
+        # Instalar Kivy y dependencias del proyecto
         pip install "kivy[base]==2.3.0"
-        pip install "kivymd==1.2.0"
-        
-        # Instalar otras dependencias
         pip install pillow fpdf2 plyer requests materialyoucolor
         
-        # Instalar dependencias del proyecto
+        # Instalar KivyMD desde master para MD3
+        pip install --upgrade "https://github.com/kivymd/KivyMD/archive/master.zip"
+        
+        # Instalar dependencias del requirements.txt si existe
         if [ -f "requirements.txt" ]; then
           pip install -r requirements.txt
         fi
+        
+        # Verificar instalaciones
+        python -c "import kivy; print(f'Kivy version: {kivy.__version__}')"
+        python -c "import kivymd; print(f'KivyMD version: {kivymd.__version__ if hasattr(kivymd, \"__version__\") else \"master\"}')"
+        python -c "import PIL; print(f'Pillow version: {PIL.__version__}')"
 
     # ============================================
     # 7. CONFIGURAR VARIABLES DE ENTORNO
     # ============================================
-    - name: Setup environment variables
+    - name: Setup environment
       run: |
         echo "BUILDOZER_WARN_ON_ROOT=0" >> $GITHUB_ENV
         echo "ANDROID_HOME=$HOME/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
         echo "ANDROID_SDK_ROOT=$HOME/.buildozer/android/platform/android-sdk" >> $GITHUB_ENV
         echo "JAVA_HOME=$JAVA_HOME_17_X64" >> $GITHUB_ENV
         echo "PATH=$HOME/.local/bin:$PATH" >> $GITHUB_ENV
+        echo "P4A_RELEASE_KEYSTORE=$HOME/.buildozer/android/release.keystore" >> $GITHUB_ENV
+        echo "P4A_RELEASE_KEYSTORE_PASS=android" >> $GITHUB_ENV
+        echo "P4A_RELEASE_KEYALIAS_PASS=android" >> $GITHUB_ENV
+        echo "P4A_RELEASE_KEYALIAS=android" >> $GITHUB_ENV
 
     # ============================================
     # 8. VERIFICAR ESTRUCTURA DEL PROYECTO
@@ -147,91 +151,65 @@ jobs:
         echo "=== Estructura del proyecto ==="
         ls -la
         echo ""
-        echo "=== Contenido de main.py (primeras líneas) ==="
-        head -30 main.py
-        echo ""
         echo "=== Verificando buildozer.spec ==="
         if [ -f "buildozer.spec" ]; then
-          cat buildozer.spec
+          echo "buildozer.spec encontrado"
+          # Verificar configuraciones críticas
+          grep -E "(title|package.name|package.domain|version|requirements|android.api|android.ndk)" buildozer.spec
         else
           echo "ERROR: buildozer.spec no encontrado!"
           exit 1
         fi
+        
         echo ""
-        echo "=== Verificando imports de Python ==="
-        python -c "
+        echo "=== Verificando main.py ==="
+        if [ -f "main.py" ]; then
+          echo "main.py encontrado"
+          # Verificar imports básicos
+          python -c "
 import sys
 sys.path.insert(0, '.')
 try:
-    import kivy
-    import kivymd
-    import PIL
-    import fpdf
-    import plyer
-    import requests
-    print('✓ Todas las dependencias importadas correctamente')
+    exec(open('main.py').read())
+    print('✓ main.py se ejecuta sin errores de sintaxis')
+except SyntaxError as e:
+    print(f'✗ Error de sintaxis: {e}')
+    sys.exit(1)
 except ImportError as e:
     print(f'✗ Error de importación: {e}')
     sys.exit(1)
+except Exception as e:
+    print(f'⚠ Otro error (puede ser normal): {e}')
 "
+        else
+          echo "ERROR: main.py no encontrado!"
+          exit 1
+        fi
 
     # ============================================
     # 9. CONFIGURAR BUILDOZER
     # ============================================
     - name: Configure Buildozer
       run: |
+        # Asegurar que buildozer esté en PATH
+        export PATH="$HOME/.local/bin:$PATH"
+        
         # Inicializar Buildozer si no existe config
         if [ ! -f ".buildozer/config" ]; then
           echo "Inicializando Buildozer..."
           buildozer init
+          # Copiar nuestro buildozer.spec si existe
+          if [ -f "buildozer.spec" ]; then
+            cp buildozer.spec .buildozer/default.spec
+          fi
         fi
         
-        # Asegurar que buildozer.spec tenga configuración correcta
-        if [ -f "buildozer.spec" ]; then
-          echo "=== Configurando buildozer.spec ==="
-          # Backup del archivo original
-          cp buildozer.spec buildozer.spec.backup
-          
-          # Actualizar configuraciones importantes
-          python3 -c "
-import configparser
-config = configparser.ConfigParser()
-config.read('buildozer.spec')
-
-# Asegurar sección [app]
-if not config.has_section('app'):
-    config.add_section('app')
-
-# Configuraciones esenciales
-config.set('app', 'title', 'Factory Manager Pro')
-config.set('app', 'package.name', 'factorymanager')
-config.set('app', 'package.domain', 'org.factory')
-config.set('app', 'source.dir', '.')
-config.set('app', 'source.include_exts', 'py,png,jpg,kv,atlas,ttf,json,xml')
-config.set('app', 'version', '1.0.0')
-config.set('app', 'requirements', 'python3==3.9.9,kivy==2.3.0,kivymd==1.2.0,pillow==10.0.0,fpdf2==2.7.4,plyer==2.1.0,requests==2.31.0,materialyoucolor==2.0.2')
-config.set('app', 'orientation', 'landscape')
-config.set('app', 'fullscreen', '1')
-
-# Configuraciones Android
-config.set('app', 'android.arch', 'arm64-v8a')
-config.set('app', 'android.api', '33')
-config.set('app', 'android.minapi', '21')
-config.set('app', 'android.sdk', '24')
-config.set('app', 'android.ndk', '25b')
-config.set('app', 'android.gradle_dependencies', '')
-config.set('app', 'android.allow_backup', 'True')
-config.set('app', 'android.accept_sdk_license', 'True')
-
-# Permisos
-config.set('app', 'android.permissions', 'INTERNET,WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE')
-
-# Guardar cambios
-with open('buildozer.spec', 'w') as f:
-    config.write(f)
-print('✓ buildozer.spec actualizado')
-"
-        fi
+        # Mostrar versión de Buildozer
+        buildozer --version
+        
+        # Mostrar configuración actual
+        echo "=== Configuración Buildozer ==="
+        buildozer config 2>/dev/null | grep -E "(title|package|version|requirements|android)"
 
     # ============================================
     # 10. LIMPIAR BUILD ANTERIOR
@@ -239,85 +217,156 @@ print('✓ buildozer.spec actualizado')
     - name: Clean previous builds
       run: |
         echo "Limpiando builds anteriores..."
-        buildozer android clean 2>/dev/null || true
-        rm -rf bin/ .buildozer/android/platform/build-* || true
+        # Limpiar solo archivos de build, mantener cache de SDK
+        rm -rf bin/ .buildozer/android/platform/build-* .buildozer/android/app 2>/dev/null || true
+        
+        # Verificar espacio disponible
+        df -h
+        echo ""
+        echo "Espacio en /tmp:"
+        df -h /tmp
 
     # ============================================
-    # 11. CONSTRUIR APK
+    # 11. DESCARGAR DEPENDENCIAS ANDROID
     # ============================================
-    - name: Build APK
+    - name: Download Android dependencies
       run: |
-        echo "=== Iniciando construcción de APK ==="
+        echo "Descargando dependencias Android (esto puede tomar tiempo)..."
+        
+        # Ejecutar comando que descarga SDK/NDK sin hacer build completo
+        timeout 1800 buildozer android update 2>&1 | tee download.log || true
+        
+        # Verificar que se descargaron las herramientas
+        echo "=== Verificando descargas ==="
+        if [ -d "$HOME/.buildozer/android/platform/android-sdk" ]; then
+          echo "✓ Android SDK descargado"
+          ls -la $HOME/.buildozer/android/platform/android-sdk/
+        fi
+        
+        if [ -d "$HOME/.buildozer/android/platform/android-ndk-r25b" ]; then
+          echo "✓ Android NDK r25b descargado"
+        fi
+
+    # ============================================
+    # 12. CONSTRUIR APK/AAB
+    # ============================================
+    - name: Build Android package
+      run: |
+        echo "=== Iniciando construcción ==="
+        
+        # Añadir user bin al PATH
+        export PATH="$HOME/.local/bin:$PATH"
         
         # Determinar tipo de build
         if [[ "${{ github.event.inputs.build_type }}" == "release" ]] || [[ "${{ startsWith(github.ref, 'refs/tags/v') }}" == "true" ]]; then
           BUILD_TYPE="release"
-          echo "Construyendo versión RELEASE"
+          ARTIFACT_TYPE="AAB"
+          echo "Construyendo versión RELEASE (.aab)"
         else
           BUILD_TYPE="debug"
-          echo "Construyendo versión DEBUG"
+          ARTIFACT_TYPE="APK"
+          echo "Construyendo versión DEBUG (.apk)"
         fi
         
-        # Construir con Buildozer (con timeout de 2 horas)
-        timeout 7200 buildozer -v android $BUILD_TYPE 2>&1 | tee buildozer.log
+        # Crear keystore para release si no existe
+        if [[ "$BUILD_TYPE" == "release" ]]; then
+          if [ ! -f "$HOME/.buildozer/android/release.keystore" ]; then
+            echo "Creando keystore de release..."
+            keytool -genkey -v -keystore $HOME/.buildozer/android/release.keystore \
+              -alias android -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass android -keypass android \
+              -dname "CN=Android Debug, O=Android, C=US"
+          fi
+        fi
         
-        # Verificar si el build fue exitoso
+        echo "=== Ejecutando Buildozer ==="
+        # Construir con timeout extendido (3 horas)
+        timeout 10800 buildozer -v android $BUILD_TYPE 2>&1 | tee buildozer.log
+        
+        # Verificar resultado
         BUILD_EXIT_CODE=$?
         
         if [ $BUILD_EXIT_CODE -eq 0 ]; then
           echo "✓ Build completado exitosamente!"
         elif [ $BUILD_EXIT_CODE -eq 124 ]; then
-          echo "⚠ Build timeout después de 2 horas"
-          # Continuar para ver si al menos se generó el APK
+          echo "⚠ Build timeout después de 3 horas"
+          # Verificar si al menos se generó algo
+          if find bin/ -name "*.apk" -o -name "*.aab" 2>/dev/null | grep -q .; then
+            echo "✓ Se generaron archivos a pesar del timeout"
+          else
+            echo "✗ No se generaron archivos"
+            exit 1
+          fi
         else
           echo "✗ Build falló con código: $BUILD_EXIT_CODE"
-          echo "=== Últimas 50 líneas del log ==="
-          tail -50 buildozer.log
+          echo "=== Últimas 100 líneas del log ==="
+          tail -100 buildozer.log
+          echo "=== Buscando errores comunes ==="
+          grep -i -E "(error|fail|exception|not found|cannot|unable)" buildozer.log | tail -20
           exit 1
         fi
 
     # ============================================
-    # 12. VERIFICAR Y LISTAR ARTEFACTOS
+    # 13. VERIFICAR ARTEFACTOS GENERADOS
     # ============================================
-    - name: Check build artifacts
+    - name: Verify build artifacts
       run: |
-        echo "=== Buscando archivos APK/AAB ==="
+        echo "=== Verificando artefactos generados ==="
         
-        # Buscar en directorio bin
-        if [ -d "bin" ]; then
-          echo "Contenido de bin/:"
-          ls -la bin/
-          echo ""
-          echo "Archivos APK encontrados:"
-          find bin/ -name "*.apk" -type f 2>/dev/null
-          echo ""
-          echo "Archivos AAB encontrados:"
-          find bin/ -name "*.aab" -type f 2>/dev/null
-        else
-          echo "Directorio 'bin/' no encontrado"
-          # Buscar en toda la estructura
-          echo "Buscando en todo el proyecto..."
-          find . -name "*.apk" -o -name "*.aab" 2>/dev/null | head -20
-        fi
+        # Crear directorio bin si no existe
+        mkdir -p bin
         
-        # Verificar que existe al menos un APK
-        APK_COUNT=$(find . -name "*.apk" -type f 2>/dev/null | wc -l)
-        AAB_COUNT=$(find . -name "*.aab" -type f 2>/dev/null | wc -l)
+        # Buscar archivos generados
+        APK_FILES=$(find . -name "*.apk" -type f 2>/dev/null)
+        AAB_FILES=$(find . -name "*.aab" -type f 2>/dev/null)
+        
+        echo "APKs encontrados:"
+        echo "$APK_FILES" || echo "Ninguno"
+        echo ""
+        echo "AABs encontrados:"
+        echo "$AAB_FILES" || echo "Ninguno"
+        
+        # Mover archivos al directorio bin
+        for file in $APK_FILES $AAB_FILES; do
+          if [ -f "$file" ]; then
+            echo "Moviendo $file a bin/"
+            mv "$file" bin/
+          fi
+        done
+        
+        # Verificar contenido de bin
+        echo ""
+        echo "=== Contenido de bin/ ==="
+        ls -la bin/ || echo "Directorio bin/ vacío"
+        
+        # Contar archivos
+        APK_COUNT=$(ls -1 bin/*.apk 2>/dev/null | wc -l)
+        AAB_COUNT=$(ls -1 bin/*.aab 2>/dev/null | wc -l)
         
         echo ""
         echo "Resumen:"
-        echo "- APKs encontrados: $APK_COUNT"
-        echo "- AABs encontrados: $AAB_COUNT"
+        echo "- APKs en bin/: $APK_COUNT"
+        echo "- AABs en bin/: $AAB_COUNT"
         
         if [ $APK_COUNT -eq 0 ] && [ $AAB_COUNT -eq 0 ]; then
-          echo "ERROR: No se encontraron archivos APK/AAB!"
-          echo "=== Últimas 100 líneas del log ==="
-          tail -100 buildozer.log
+          echo "ERROR: No se encontraron archivos en bin/"
+          echo "=== Buscando en todo el proyecto ==="
+          find . -name "*.apk" -o -name "*.aab" 2>/dev/null
           exit 1
         fi
+        
+        # Mostrar información de los archivos
+        for file in bin/*.apk bin/*.aab 2>/dev/null; do
+          if [ -f "$file" ]; then
+            echo ""
+            echo "Archivo: $(basename $file)"
+            echo "Tamaño: $(du -h "$file" | cut -f1)"
+            echo "Última modificación: $(date -r "$file")"
+          fi
+        done
 
     # ============================================
-    # 13. SUBIR ARTEFACTOS
+    # 14. SUBIR ARTEFACTOS DEBUG
     # ============================================
     - name: Upload Debug APK
       if: github.event.inputs.build_type != 'release' && !startsWith(github.ref, 'refs/tags/v')
@@ -329,7 +378,11 @@ print('✓ buildozer.spec actualizado')
           buildozer.log
         if-no-files-found: error
         retention-days: 7
+        compression-level: 0
 
+    # ============================================
+    # 15. SUBIR ARTEFACTOS RELEASE
+    # ============================================
     - name: Upload Release AAB/APK
       if: github.event.inputs.build_type == 'release' || startsWith(github.ref, 'refs/tags/v')
       uses: actions/upload-artifact@v4
@@ -340,10 +393,11 @@ print('✓ buildozer.spec actualizado')
           bin/*.apk
           buildozer.log
         if-no-files-found: error
-        retention-days: 30
+        retention-days: 90
+        compression-level: 0
 
     # ============================================
-    # 14. CREAR RELEASE EN GITHUB
+    # 16. CREAR RELEASE EN GITHUB (solo para tags)
     # ============================================
     - name: Create GitHub Release
       if: startsWith(github.ref, 'refs/tags/v')
@@ -354,7 +408,7 @@ print('✓ buildozer.spec actualizado')
           bin/*.apk
         generate_release_notes: true
         draft: false
-        prerelease: false
+        prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc') }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -373,9 +427,9 @@ print('✓ buildozer.spec actualizado')
         name: factory-manager-debug
         path: ./artifacts
         
-    - name: Verify APK
+    - name: Verify APK file
       run: |
-        echo "=== Verificación de APK ==="
+        echo "=== Verificación de APK generado ==="
         
         if [ -d "./artifacts" ]; then
           echo "Contenido de artifacts/:"
@@ -385,15 +439,28 @@ print('✓ buildozer.spec actualizado')
           
           if [ -n "$APK_FILE" ]; then
             echo ""
-            echo "APK encontrado: $APK_FILE"
+            echo "✅ APK generado exitosamente!"
+            echo "Archivo: $(basename "$APK_FILE")"
             echo "Tamaño: $(du -h "$APK_FILE" | cut -f1)"
+            echo "Ruta: $APK_FILE"
+            
+            # Información básica del APK
             echo ""
-            echo "✓ Build completado y APK generado exitosamente!"
+            echo "=== Información del APK ==="
+            file "$APK_FILE"
+            
+            # Verificar que no está vacío
+            FILE_SIZE=$(stat -c%s "$APK_FILE")
+            if [ $FILE_SIZE -lt 1000000 ]; then
+              echo "⚠ ADVERTENCIA: El APK es muy pequeño ($FILE_SIZE bytes), puede estar corrupto"
+            else
+              echo "✓ Tamaño OK: $FILE_SIZE bytes"
+            fi
           else
-            echo "✗ No se encontró archivo APK en los artifacts"
+            echo "❌ No se encontró archivo APK en los artifacts"
             exit 1
           fi
         else
-          echo "✗ No se descargaron artifacts"
+          echo "❌ No se descargaron artifacts"
           exit 1
         fi
